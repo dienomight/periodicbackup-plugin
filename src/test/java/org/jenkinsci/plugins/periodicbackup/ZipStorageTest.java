@@ -2,10 +2,13 @@ package org.jenkinsci.plugins.periodicbackup;
 
 import com.google.common.collect.Lists;
 import com.google.common.io.Resources;
+import org.apache.commons.io.FileUtils;
 import org.codehaus.plexus.archiver.ArchiverException;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.jvnet.hudson.test.HudsonTestCase;
+import org.jvnet.hudson.test.LenientRunnable;
 
 import java.io.File;
 import java.io.IOException;
@@ -28,10 +31,15 @@ public class ZipStorageTest extends HudsonTestCase {
     @Before
     public void setUp() throws Exception {
         super.setUp();
-        super.recipeLoadCurrentPlugin();
         baseFileName = "baseFileName";
         zipStorage = new ZipStorage(false, 0);
-        tempDirectory = new File(Resources.getResource("data/temp/").getFile());
+        tempDirectory = new File(Resources.getResource("data/temp2/").getFile());
+        if(tempDirectory.exists()) {
+            FileUtils.deleteDirectory(tempDirectory);
+        }
+        assertTrue(tempDirectory.mkdir());
+        assertTrue(new File(tempDirectory, "dummy").createNewFile());
+
         archive1 = new File(Resources.getResource("data/archive1").getFile());
         archive2 = new File(Resources.getResource("data/archive2").getFile());
         assertTrue(tempDirectory.getAbsolutePath() != null);
@@ -92,12 +100,11 @@ public class ZipStorageTest extends HudsonTestCase {
         assertTrue(zipArchive1.exists() && zipArchive2.exists());
         List<File> archives = Lists.newArrayList(zipArchive1, zipArchive2);
         int filesCountBefore = tempDirectory.listFiles().length;
-        int expectedFilesCount = filesCountBefore + 2;
+        int expectedResult = filesCountBefore + 2;
 
         zipStorage.unarchiveFiles(archives, tempDirectory);
-        assertEquals(filesCountBefore + 2, expectedFilesCount);
+        int filesCountAfter = tempDirectory.listFiles().length;
 
-
-
+        assertEquals(filesCountAfter, expectedResult);
     }
 }

@@ -27,6 +27,7 @@ package org.jenkinsci.plugins.periodicbackup;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import hudson.util.DescribableList;
+import org.apache.commons.io.FileUtils;
 import org.codehaus.plexus.archiver.ArchiverException;
 
 import java.io.File;
@@ -116,10 +117,17 @@ public class BackupExecutor {
 
             // Delete the temporary archive files
             for (File f : archives) {
-                LOGGER.info("Deleting temporary file " + f.getAbsolutePath());
-                if (!f.delete()) {
-                    LOGGER.warning("Could not delete " + f.getAbsolutePath());
+                if(f.isDirectory()) {
+                    LOGGER.info("Deleting temporary archive directory " + f.getAbsolutePath());
+                    FileUtils.deleteDirectory(f);
                 }
+                else {
+                    LOGGER.info("Deleting temporary file " + f.getAbsolutePath());
+                    if (!f.delete()) {
+                        LOGGER.warning("Could not delete " + f.getAbsolutePath());
+                    }
+                }
+
             }
         }
         LOGGER.info("Backup finished successfully after " + (System.currentTimeMillis() - start) + " ms" );

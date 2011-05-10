@@ -3,6 +3,9 @@ package org.jenkinsci.plugins.periodicbackup;
 import com.google.common.collect.Lists;
 import com.google.common.io.Resources;
 
+import junit.framework.TestCase;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.jvnet.hudson.test.HudsonTestCase;
 
@@ -18,7 +21,7 @@ import java.util.List;
  */
 public class LocalDirectoryTest extends HudsonTestCase {
     @Test
-    public void testGetAvailableBackups() throws Exception {
+    public void testGetAvailableBackups() {
         File path = new File(Resources.getResource("data/").getFile());
         LocalDirectory localDirectory = new LocalDirectory(path, true);
         Date expectedDate = new Date(123);
