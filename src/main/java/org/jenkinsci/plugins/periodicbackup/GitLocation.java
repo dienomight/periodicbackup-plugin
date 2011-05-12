@@ -24,14 +24,19 @@
 
 package org.jenkinsci.plugins.periodicbackup;
 
+import com.google.common.base.Function;
 import com.google.common.base.Objects;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import hudson.Extension;
 import org.apache.commons.io.FileUtils;
+import org.codehaus.groovy.ant.FileIterator;
 import org.eclipse.jgit.api.*;
 import org.eclipse.jgit.api.errors.*;
 import org.eclipse.jgit.errors.UnmergedPathException;
+import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RepositoryBuilder;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevTree;
@@ -54,9 +59,9 @@ public class GitLocation extends Location {
 
     private String repositoryURL;
     private String initialCommit;
-    private boolean isInitialized;
-    private Map<String, String> backupCommitsMap;
+    //private boolean isInitialized;
 
+    private transient Map<String, String> backupCommitsMap;
     private transient Git git;
 
     private static final Logger LOGGER = Logger.getLogger(GitLocation.class.getName());
@@ -66,7 +71,7 @@ public class GitLocation extends Location {
         super(enabled);
         this.backupCommitsMap = new HashMap<String, String>();
         this.repositoryURL = repositoryURL;
-        isInitialized = false;
+        //isInitialized = false;
     }
 
     @SuppressWarnings("unused")
@@ -83,141 +88,123 @@ public class GitLocation extends Location {
      *
      * Initialize GitStorage by cloning/pulling repository to tempRepo directory and creating master branch
      * @throws PeriodicBackupException when initial commit is different then expected one
+     * @return true if repository is empty
      */
-    public void initialize() throws PeriodicBackupException {
+    public boolean initialize() throws PeriodicBackupException, NoHeadException, IOException, InvalidRemoteException, RefNotFoundException, DetachedHeadException, WrongRepositoryStateException, InvalidConfigurationException, CanceledException, InvalidRefNameException, RefAlreadyExistsException {
         PeriodicBackupLink link = PeriodicBackupLink.get();
         File tempRepoDir = new File(link.getTempDirectory(), "tempRepo");
         if(backupCommitsMap == null) {
             backupCommitsMap = new HashMap<String, String>();
         }
 
-        //TODO: how to check if it is the right/non-corrupted repository?     commit as variable
         if (new File(tempRepoDir, ".git").exists()) {
             LOGGER.info("Repository directory exists, trying to pull");
             if(initialCommit != null) {
                 LOGGER.info("Comparing to the initial commit.");
                 // Get initial commit
-                LogCommand log = git.log();
-                Iterable<RevCommit> call = null;
-                try {
-                    call = log.call();
-                } catch (NoHeadException e) {
-                    e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
-                }
-                List<RevCommit> list = Lists.newArrayList(call);
-                boolean hasInitial = false;
-                for(RevCommit revCommit : list) {
-                    System.out.println(revCommit.name());//TODO
-                    if(revCommit.name().equals(initialCommit)) {
-                        hasInitial = true;
+                Iterable<String> logNames = Iterables.transform(git.log().call(), new Function<RevCommit, String>() {
+                    public String apply(RevCommit revCommit) {
+                        return revCommit.name();
                     }
-                }
-                if(!hasInitial) {
+                });
+                if(!Iterables.contains(logNames, initialCommit)) {
                     throw new PeriodicBackupException("Existing repository does not match expected initial commit.");
                 }
 
             }
-            FileRepository fileRepository = null;
-            try {
-                fileRepository = new FileRepository(tempRepoDir);
-            } catch (IOException e) {
-                LOGGER.warning("There was a problem with repository. " + e.getMessage());
+            FileRepository fileRepository = new FileRepository(tempRepoDir);
+
+            // Set up the working directory
+            git = new Git(new RepositoryBuilder().setWorkTree(tempRepoDir).build());
+
+            if (isRepositoryEmpty()) {
+                return true;
             }
-            if (fileRepository != null) {
-                // Set up the working directory
-                try {
-                    git = new Git(new RepositoryBuilder().setWorkTree(tempRepoDir).build());
-                } catch (IOException e) {
-                    LOGGER.warning("Could not set work tree to " + tempRepoDir.getAbsolutePath() + " " + e.getMessage());
-                }
-                // Checkout master branch
-                try {
-                    git.checkout().setStartPoint("refs/remotes/origin/master").setName("master").call();
-                } catch (RefAlreadyExistsException e) {
-                    LOGGER.warning("Problem during checkout " + e.getMessage());
-                } catch (RefNotFoundException e) {
-                    LOGGER.warning("Problem during checkout " + e.getMessage());
-                } catch (InvalidRefNameException e) {
-                    LOGGER.warning("Problem during checkout " + e.getMessage());
-                }
-            }
+
+            // Checkout master branch
+
+            git.checkout().setName("master").call(); //TODO throws JGitInternalException: Cannot lock c:\Temp\niematakiegofolderu\tempRepo\.git\index   during restore - but only (?) first time, further on no exception
+             //.checkout().setName("refs/heads/master").call();
+             //.checkout().setStartPoint("refs/remotes/origin/master").setName("master").call();
+
             // Set remote to the origin
-            try {
-                git.fetch().setRemote("origin").setRefSpecs().call();
-            } catch (InvalidRemoteException e) {
-                LOGGER.warning("Problem during fetch. " + e.getMessage());
-            }
+           // git.fetch().setRemote("origin").setRefSpecs().call();
+
             // Setting value for key branch.master.merge in configuration
             git.getRepository().getConfig().setString("branch", "master", "merge", "refs/heads/master");
-            // Pull from the origin
-            try {
-                git.pull().call();
-            } catch (WrongRepositoryStateException e) {
-                LOGGER.warning("Problem during pull. " + e.getMessage());
-            } catch (InvalidConfigurationException e) {
-                LOGGER.warning("Problem during pull. " + e.getMessage());
-            } catch (DetachedHeadException e) {
-                LOGGER.warning("Problem during pull. " + e.getMessage());
-            } catch (InvalidRemoteException e) {
-                LOGGER.warning("Problem during pull. " + e.getMessage());
-            } catch (CanceledException e) {
-                LOGGER.warning("Problem during pull. " + e.getMessage());
-            } catch (RefNotFoundException e) {
-                LOGGER.warning("Problem during pull. " + e.getMessage());
-            }
-        } else {
+
+            // Merge from the origin
+            git.pull().call();      // TODO when the tempRepo has content but the origin is empty bare repo we have JGitInternalException: Could not get advertised Ref for branch refs/heads/master
+        }
+        else {
             // Delete temp repository if it already exists
             cleanUpRepository();
             // Clone the repository
-            try {
-                git = cloneRepo(repositoryURL, tempRepoDir);
-            } catch (PeriodicBackupException e) {
-                LOGGER.warning("Could not clone repository! " + e.getMessage());
-                return;
-            }
+            LOGGER.info("Cloning the repository from " + repositoryURL);
+            git = cloneRepo(repositoryURL, tempRepoDir);   //TODO try to clone empty one and intercept if exception
             LOGGER.info("Creating master branch...");
-            // Create a master branch and switch to it
-            try {
-                git.branchCreate().setName("master").call();
-                git.checkout().setName("master").call();
-            } catch (RefAlreadyExistsException e) {
-                LOGGER.warning("Could not create master branch " + e.getMessage());
-            } catch (RefNotFoundException e) {
-                LOGGER.warning("Could not create master branch " + e.getMessage());
-            } catch (InvalidRefNameException e) {
-                LOGGER.warning("Could not create master branch " + e.getMessage());
+
+            if(isRepositoryEmpty()) {
+                return true;
             }
+
+            // Create a master branch and switch to it
+            git.branchCreate().setName("master").call();    // Ref HEAD can not be resolved
+            git.checkout().setName("master").call();
 
             // Get initial commit
-            LogCommand log = git.log();
-            Iterable<RevCommit> call = null;
-            try {
-                call = log.call();
-            } catch (NoHeadException e) {
-                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            Iterable<RevCommit> call = git.log().call();
+
+            for (RevCommit revCommit : call) {
+                initialCommit = revCommit.name();
             }
-            List<RevCommit> list = Lists.newArrayList(call);
-            initialCommit = list.get(list.size() - 1).name();
         }
 
+        return false;
 
-        isInitialized = true;
+        //isInitialized = true;
+    }
+
+    private boolean isRepositoryEmpty() {
+        return git.getRepository().getAllRefs().isEmpty();
     }
 
     @Override
     public Iterable<BackupObject> getAvailableBackups() {
-        if(!isInitialized || git == null) {
+//        if(!isInitialized || git == null) {
             try {
-                initialize();
+                if(initialize()) {
+                    return new ArrayList<BackupObject>();
+                }
+
             } catch (PeriodicBackupException e) {
                 e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (NoHeadException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (WrongRepositoryStateException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (InvalidRemoteException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (InvalidRefNameException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (RefAlreadyExistsException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (InvalidConfigurationException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (DetachedHeadException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (CanceledException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (IOException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (RefNotFoundException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
             }
-        }
-        if(git  == null) System.out.println("--------------------------wtf? git is null");//TODO
+      //  }
         LogCommand log = git.log();
         Iterable<RevCommit> call = null;
         try {
-            call = log.call();
+            call = log.call();          // TODO if it's empty repository then- NoHeadException: No HEAD exists and no explicit starting revision was specified
         } catch (NoHeadException e) {
             e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
         }
@@ -256,33 +243,75 @@ public class GitLocation extends Location {
             }
 
         }
-        // Check out back to master
-        try {
-            git.checkout().setName("refs/heads/master").call();
-        } catch (RefAlreadyExistsException e) {
-            e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
-        } catch (RefNotFoundException e) {
-            e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
-        } catch (InvalidRefNameException e) {
-            e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
-        }
-
         return Iterables.transform(backupObjectStrings, BackupObject.getFromString());
     }
 
     @Override
     public void storeBackupInLocation(Iterable<File> archives, File backupObjectFile) throws IOException {
-        if (!isInitialized) {
+        //if (!isInitialized) {
             try {
                 initialize();
             } catch (PeriodicBackupException e) {
                 e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (InvalidRefNameException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (RefAlreadyExistsException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (NoHeadException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (DetachedHeadException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (InvalidConfigurationException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (InvalidRemoteException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (CanceledException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (WrongRepositoryStateException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+            } catch (RefNotFoundException e) {
+                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
             }
-        }
+        //}
+
+
         PeriodicBackupLink link = PeriodicBackupLink.get();
         File tempRepoDir = new File(link.getTempDirectory(), "tempRepo");
-        // Add files
-        addFilesToRepo(archives, backupObjectFile, tempRepoDir);
+
+        try {
+            // Cleaning up working directory
+            cleanUpWorkingDirectory();
+
+            // Copy the files
+            copyFilesToRepo(archives, backupObjectFile, tempRepoDir);
+
+            Status status = git.status().call();
+
+            if(status.getAdded().size() != 0) {         //TODO get rid of it when you are sure it's safe
+                for(String s : status.getAdded()) {
+                    System.out.println("Whooooohaa! We have something added: " + s);
+                }
+            }
+            Preconditions.checkState(status.getAdded().size() == 0);     // TODO was throwing before exception
+            Preconditions.checkState(status.getChanged().size() == 0);
+            Preconditions.checkState(status.getRemoved().size() == 0);
+
+            // Call git rm
+            for(String file : status.getMissing()) {
+                RmCommand rm = git.rm();
+                LOGGER.info("Calling git rm on " + file);
+                rm.addFilepattern(file).call();
+            }
+
+            // Call git add
+            for(String file : Sets.union(status.getModified(), status.getUntracked())) {
+                AddCommand addCommand = git.add();
+                LOGGER.info("Adding " + file + " to the repository...");
+                addCommand.addFilepattern(file).call();
+            }
+        } catch (NoFilepatternException e) {
+            e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+        }
         // Create commit message
         SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy MM dd HH:mm");
         String message = "Backup created " + dateFormat.format(new Date());
@@ -315,6 +344,28 @@ public class GitLocation extends Location {
 
     /**
      *
+     * Deletes files and directories in the working directory, except the ".git" directory
+     */
+    public void cleanUpWorkingDirectory() throws NoFilepatternException, IOException {
+        LOGGER.info("Cleaning up the working directory ...");
+
+        File workDir = git.getRepository().getWorkTree();
+        for (File f : workDir.listFiles()) {
+            if(! f.getName().equals(".git")) {
+                if(f.isDirectory()) {
+                    FileUtils.deleteDirectory(f);
+                }
+                else {
+                    if(!f.delete()) {
+                        LOGGER.warning("Could not clean up working directory, file " + f.getAbsolutePath() + " could not be deleted.");
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     *
      * Clone repository in the temporary directory
      *
      * @param urlOfRepo URL of the repository to clone
@@ -332,39 +383,17 @@ public class GitLocation extends Location {
         return cloneCommand.call();
     }
 
-    /**
-     *
-     * Copy backup files to the repository directory and adds the files to the git repository
-     *
-     * @param archives files to backup
-     * @param backupObjectFile BackupObject file
-     * @param tempRepoDir temporary repository directory
-     */
-    public void addFilesToRepo(Iterable<File> archives, File backupObjectFile, File tempRepoDir) {
-        if(git != null) {
-            AddCommand addCommand = git.add();
-            try {
-                LOGGER.info("Copying backup files to temporary repository directory " + tempRepoDir.getAbsolutePath());
-                for(File archive : archives) {
-                    if(archive.isDirectory()) {
-                        FileUtils.copyDirectory(archive, new File(tempRepoDir, "archive"));
-                    }
-                    else {
-                        FileUtils.copyFile(archive, new File(tempRepoDir, "archive"));
-                    }
-                }
-                FileUtils.copyFile(backupObjectFile, new File(tempRepoDir, "backup.pbobj"));
-            } catch (IOException e) {
-                LOGGER.warning("Error when copying files to " + tempRepoDir.getAbsolutePath() + " " + e.getMessage());
-                return;
+    private void copyFilesToRepo(Iterable<File> archives, File backupObjectFile, File tempRepoDir) throws IOException {
+        LOGGER.info("Copying backup files to temporary repository directory " + tempRepoDir.getAbsolutePath());
+        for(File archive : archives) {
+            if(archive.isDirectory()) {
+                FileUtils.copyDirectory(archive, new File(tempRepoDir, "archive"));
             }
-            try {
-                LOGGER.info("Adding files to the repository...");
-                addCommand.addFilepattern(".").call();
-            } catch (NoFilepatternException e) {
-                LOGGER.warning("Cannot add files. " + e.getMessage());
+            else {
+                FileUtils.copyFile(archive, new File(tempRepoDir, "archive"));
             }
         }
+        FileUtils.copyFile(backupObjectFile, new File(tempRepoDir, "backup.pbobj"));
     }
 
     /**
@@ -416,7 +445,6 @@ public class GitLocation extends Location {
             getAvailableBackups();
         }
 
-        if(backupCommitsMap  == null) System.out.println("----------------------------- wtf ? map stil null");//TODO
         String commit = backupCommitsMap.get(backupObjectAsString);
 
         try {
