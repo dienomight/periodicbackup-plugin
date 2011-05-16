@@ -134,6 +134,28 @@ public class UtilTest extends TestCase {
         Map<String, String> backupCommitsMap = new Hashtable<String, String>();
         backupCommitsMap.put("a", "b");
         System.out.println(backupCommitsMap.get("a"));
+
+        int[] A = {-7, 1, 5, 2, -4, 3, 0};
+        int N = A.length;
+
+        int leftSum, rightSum;
+        int i, j, k;
+
+        for (i = 0; i < N; i++) {
+            leftSum = 0;
+            rightSum = 0;
+
+            for (j = 0; j < i; j++) {
+                leftSum += A[j];
+            }
+            for (k = i + 1; k < N; k++) {
+                leftSum += A[k];
+            }
+            if (leftSum == rightSum) {
+                System.out.println("jest i :" + i);
+            }
+        }
+        System.out.println(-1);
     }
 
 

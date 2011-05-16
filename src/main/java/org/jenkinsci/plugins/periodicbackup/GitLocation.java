@@ -32,15 +32,12 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import hudson.Extension;
 import org.apache.commons.io.FileUtils;
-import org.codehaus.groovy.ant.FileIterator;
 import org.eclipse.jgit.api.*;
 import org.eclipse.jgit.api.errors.*;
 import org.eclipse.jgit.errors.UnmergedPathException;
-import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RepositoryBuilder;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevTree;
-import org.eclipse.jgit.storage.file.FileRepository;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -90,9 +87,14 @@ public class GitLocation extends Location {
      * @throws PeriodicBackupException when initial commit is different then expected one
      * @return true if repository is empty
      */
-    public boolean initialize() throws PeriodicBackupException, NoHeadException, IOException, InvalidRemoteException, RefNotFoundException, DetachedHeadException, WrongRepositoryStateException, InvalidConfigurationException, CanceledException, InvalidRefNameException, RefAlreadyExistsException {
+    public synchronized boolean initialize() throws PeriodicBackupException, NoHeadException, IOException, InvalidRemoteException, RefNotFoundException, DetachedHeadException, WrongRepositoryStateException, InvalidConfigurationException, CanceledException, InvalidRefNameException, RefAlreadyExistsException {  //TODO is synchronized the best idea ever?
+        //TODO remove it before manu kills you
+        int identifier = new Random().nextInt(99999);
+        System.out.println("********** Starting initialize with id " + identifier);
+
         PeriodicBackupLink link = PeriodicBackupLink.get();
         File tempRepoDir = new File(link.getTempDirectory(), "tempRepo");
+
         if(backupCommitsMap == null) {
             backupCommitsMap = new HashMap<String, String>();
         }
@@ -100,19 +102,25 @@ public class GitLocation extends Location {
         if (new File(tempRepoDir, ".git").exists()) {
             LOGGER.info("Repository directory exists, trying to pull");
             if(initialCommit != null) {
-                LOGGER.info("Comparing to the initial commit.");
-                // Get initial commit
-                Iterable<String> logNames = Iterables.transform(git.log().call(), new Function<RevCommit, String>() {
-                    public String apply(RevCommit revCommit) {
-                        return revCommit.name();
-                    }
-                });
-                if(!Iterables.contains(logNames, initialCommit)) {
-                    throw new PeriodicBackupException("Existing repository does not match expected initial commit.");
-                }
+                try {
+                    compareInitialCommit(tempRepoDir, initialCommit);
+                    LOGGER.info("Existing repository was successfully verified.");
+                } catch (PeriodicBackupException e) {
+                    LOGGER.info(e.getMessage());
 
+                    deleteExistingRepositoryFiles();
+                    // With the files deleted initialize() will clone repo
+                    return initialize(); //TODO is this the best idea ever?
+                }
             }
-            FileRepository fileRepository = new FileRepository(tempRepoDir);
+            else {         //TODO  when initial commit is null it may be that there are no commits in origin or initial commit was not persisted or it is other repo and we cannot check it, both ways it won't hurt to clone, would it?
+                LOGGER.info("Initial commit for this Location is not defined. Cannot verify existing repository, repository will be cloned.");
+                deleteExistingRepositoryFiles();
+                // With the files deleted initialize() will clone repo
+                return initialize(); //TODO is this the best idea ever?
+            }
+
+
 
             // Set up the working directory
             git = new Git(new RepositoryBuilder().setWorkTree(tempRepoDir).build());
@@ -122,47 +130,71 @@ public class GitLocation extends Location {
             }
 
             // Checkout master branch
-
             git.checkout().setName("master").call(); //TODO throws JGitInternalException: Cannot lock c:\Temp\niematakiegofolderu\tempRepo\.git\index   during restore - but only (?) first time, further on no exception
-             //.checkout().setName("refs/heads/master").call();
-             //.checkout().setStartPoint("refs/remotes/origin/master").setName("master").call();
+            //TODO I also had JGitInternalException: Checkout conflict with files: backup.pbobj when run project after rebooting
+            //.checkout().setName("refs/heads/master").call();
+            //.checkout().setStartPoint("refs/remotes/origin/master").setName("master").call();
 
             // Set remote to the origin
-           // git.fetch().setRemote("origin").setRefSpecs().call();
+            // git.fetch().setRemote("origin").setRefSpecs().call();
 
             // Setting value for key branch.master.merge in configuration
             git.getRepository().getConfig().setString("branch", "master", "merge", "refs/heads/master");
 
-            // Merge from the origin
-            git.pull().call();      // TODO when the tempRepo has content but the origin is empty bare repo we have JGitInternalException: Could not get advertised Ref for branch refs/heads/master
+            // Pull from the origin
+            try {
+                git.pull().call();      // TODO when the tempRepo has content but the origin is empty bare repo we have JGitInternalException: Could not get advertised Ref for branch refs/heads/master
+            } catch (JGitInternalException e) {
+                LOGGER.warning("Cannot pull! " + e.getMessage());
+                deleteExistingRepositoryFiles();
+                // With the files deleted initialize() will clone repo
+                return initialize(); //TODO is this the best idea ever?
+            }
+            LOGGER.info("Pull successful.");
         }
+
         else {
-            // Delete temp repository if it already exists
-            cleanUpRepository();
             // Clone the repository
             LOGGER.info("Cloning the repository from " + repositoryURL);
-            git = cloneRepo(repositoryURL, tempRepoDir);   //TODO try to clone empty one and intercept if exception
-            LOGGER.info("Creating master branch...");
+            git = cloneRepo(repositoryURL, tempRepoDir);
 
             if(isRepositoryEmpty()) {
+                System.out.println("********** Ending initialize with id " + identifier + " with result = true");   //TODO
                 return true;
             }
 
+           // LOGGER.info("Creating master branch...");
             // Create a master branch and switch to it
-            git.branchCreate().setName("master").call();    // Ref HEAD can not be resolved
+           // git.branchCreate().setName("master").call();    // Ref HEAD can not be resolved         TODO 16.05 after using official 1.12.1 and clean build I had RefAlreadyExistsException: Ref master already exists
             git.checkout().setName("master").call();
 
-            // Get initial commit
-            Iterable<RevCommit> call = git.log().call();
+            if(initialCommit == null && !isRepositoryEmpty()) {
+                // Get initial commit
+                Iterable<RevCommit> call = git.log().call();
 
-            for (RevCommit revCommit : call) {
-                initialCommit = revCommit.name();
+                for (RevCommit revCommit : call) {
+                    initialCommit = revCommit.name();
+                }
             }
         }
-
+        System.out.println("********** Ending initialize with id " + identifier + " with result = false");   //TODO
         return false;
 
         //isInitialized = true;
+    }
+
+    private void compareInitialCommit(File tempRepoDir, String initialCommit) throws NoHeadException, PeriodicBackupException, IOException {
+        LOGGER.info("Comparing to the initial commit.");
+        Git git = new Git(new RepositoryBuilder().setWorkTree(tempRepoDir).build());
+        // Get commits names
+        Iterable<String> logNames = Iterables.transform(git.log().call(), new Function<RevCommit, String>() {
+            public String apply(RevCommit revCommit) {
+                return revCommit.name();
+            }
+        });
+        if(!Iterables.contains(logNames, initialCommit)) {
+            throw new PeriodicBackupException("Existing repository does not match expected initial commit.");
+        }
     }
 
     private boolean isRepositoryEmpty() {
@@ -211,7 +243,6 @@ public class GitLocation extends Location {
         List<RevCommit> commits = Lists.newArrayList(call);
         List<String> backupObjectStrings = Lists.newArrayList();
         PeriodicBackupLink link = PeriodicBackupLink.get();
-        File tempRepoDir = new File(link.getTempDirectory(), "tempRepo");
         int commitNr = 0;
 
         // Getting BackupObject file from each commit
@@ -274,7 +305,6 @@ public class GitLocation extends Location {
             }
         //}
 
-
         PeriodicBackupLink link = PeriodicBackupLink.get();
         File tempRepoDir = new File(link.getTempDirectory(), "tempRepo");
 
@@ -289,11 +319,16 @@ public class GitLocation extends Location {
 
             if(status.getAdded().size() != 0) {         //TODO get rid of it when you are sure it's safe
                 for(String s : status.getAdded()) {
-                    System.out.println("Whooooohaa! We have something added: " + s);
+                    System.out.println("**********----------************ Whooooohaa! We have something added: " + s);
+                }
+            }
+            if(status.getChanged().size() != 0) {         //TODO get rid of it when you are sure it's safe
+                for(String s : status.getChanged()) {
+                    System.out.println("**********----------************ Whooooohaa! We have something changed: " + s);
                 }
             }
             Preconditions.checkState(status.getAdded().size() == 0);     // TODO was throwing before exception
-            Preconditions.checkState(status.getChanged().size() == 0);
+            Preconditions.checkState(status.getChanged().size() == 0);  // TODO thrown IllegalStateException 13-05-2011 13:12 when trying to backup
             Preconditions.checkState(status.getRemoved().size() == 0);
 
             // Call git rm
@@ -325,7 +360,7 @@ public class GitLocation extends Location {
      *
      * Deletes existing directory with temporary repository
      */
-    public synchronized void cleanUpRepository() {
+    public synchronized void deleteExistingRepositoryFiles() {
         if(git != null) {
             git.getRepository().close();
         }
@@ -383,8 +418,17 @@ public class GitLocation extends Location {
         return cloneCommand.call();
     }
 
+    /**
+     *                    //TODO doesn't it assume that the files are 'extracted' archives  ?
+     * Copy the backup files to the temporary repository directory
+     *
+     * @param archives backup files
+     * @param backupObjectFile
+     * @param tempRepoDir
+     * @throws IOException
+     */
     private void copyFilesToRepo(Iterable<File> archives, File backupObjectFile, File tempRepoDir) throws IOException {
-        LOGGER.info("Copying backup files to temporary repository directory " + tempRepoDir.getAbsolutePath());
+        LOGGER.info("Copying backup files to the temporary repository directory " + tempRepoDir.getAbsolutePath());
         for(File archive : archives) {
             if(archive.isDirectory()) {
                 FileUtils.copyDirectory(archive, new File(tempRepoDir, "archive"));
