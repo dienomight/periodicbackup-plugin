@@ -3,6 +3,9 @@ package org.jenkinsci.plugins.periodicbackup;
 import com.google.common.collect.Lists;
 import com.google.common.io.Resources;
 
+import junit.framework.TestCase;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.jvnet.hudson.test.HudsonTestCase;
 

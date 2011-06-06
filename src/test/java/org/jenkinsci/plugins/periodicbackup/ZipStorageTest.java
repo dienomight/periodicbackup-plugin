@@ -4,9 +4,11 @@ import com.google.common.collect.Lists;
 import com.google.common.io.Resources;
 import org.apache.commons.io.FileUtils;
 import org.codehaus.plexus.archiver.ArchiverException;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.jvnet.hudson.test.HudsonTestCase;
+import org.jvnet.hudson.test.LenientRunnable;
 
 import java.io.File;
 import java.io.IOException;
