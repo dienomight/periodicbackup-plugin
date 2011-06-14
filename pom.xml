@@ -30,6 +30,8 @@
         </developer>
     </developers>
 
+    <url>http://wiki.jenkins-ci.org/display/JENKINS/PeriodicBackup+Plugin</url>
+
     <repositories>
         <repository>
             <id>jgit-repository</id>

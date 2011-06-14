@@ -24,7 +24,6 @@ public class GitLocationTest extends HudsonTestCase {
         File bareRepo = new File(Resources.getResource("data/bareRepo").getFile());
 
         GitLocation gitLocation = new GitLocation(bareRepo.getAbsolutePath(), false);
-        gitLocation.initialize();
 
         if(destinationRepo.exists()) {
             FileUtils.deleteDirectory(destinationRepo);

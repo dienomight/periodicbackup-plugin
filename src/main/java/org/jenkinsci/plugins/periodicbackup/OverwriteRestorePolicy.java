@@ -44,7 +44,7 @@ public class OverwriteRestorePolicy implements RestorePolicy {
         File hudsonRoot = Hudson.getInstance().getRootDir();
 
         FileUtils.copyDirectory(tempDir, hudsonRoot);
-        LOGGER.info("Restoring of files finished");
+        LOGGER.info("Restoration of files finished");
     }
 
 }
