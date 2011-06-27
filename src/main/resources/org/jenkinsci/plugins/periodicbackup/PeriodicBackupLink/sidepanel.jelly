@@ -34,6 +34,7 @@
                     title="${%sidepanel.backup}"/>
             <l:task icon="images/24x24/setting.gif" href="${rootURL}/periodicbackup/configure"
                     title="${%sidepanel.configure}"/>
+            <l:task icon="images/24x24/terminal.gif" href="${rootURL}/periodicbackup/console" title="${%Console}" />
         </l:tasks>
     </l:side-panel>
 </j:jelly>

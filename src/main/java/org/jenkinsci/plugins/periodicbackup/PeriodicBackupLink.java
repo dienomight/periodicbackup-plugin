@@ -26,6 +26,7 @@
 package org.jenkinsci.plugins.periodicbackup;
 
 import antlr.ANTLRException;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import hudson.BulkChange;
 import hudson.Extension;
@@ -43,7 +44,10 @@ import javax.servlet.ServletException;
 import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Date;
+import java.util.List;
 import java.util.Map;
+import java.util.logging.*;
 
 /**
  *
@@ -68,6 +72,26 @@ public class PeriodicBackupLink extends ManagementLink implements Describable<Pe
     private int cycleDays;              // Maximum number of days to keep the backup for
 
     public PeriodicBackupLink() throws IOException {
+        try {
+            // Creating FileHandler
+            Handler fh = new FileHandler("PeriodicBackup.log");
+            List handlers = Lists.newArrayList(Logger.getLogger("").getHandlers());
+            // If the parent logger does not contain the handler add it
+            if(! handlers.contains(fh)) {
+                fh.setFormatter(new Formatter() {
+                    public String format(LogRecord record) {
+                        return  new Date(record.getMillis()).toString() + "\n"
+                                + record.getLevel() + " : "
+                                + record.getSourceClassName() + " . "
+                                + record.getSourceMethodName() + "() : "
+                                + record.getMessage() + "\n";
+                    }
+                });
+                    Logger.getLogger("").addHandler(fh);
+                }
+            } catch (IOException e) {
+            e.printStackTrace();
+        }
         load();
     }
 
@@ -124,12 +148,27 @@ public class PeriodicBackupLink extends ManagementLink implements Describable<Pe
         return Messages.displayName();
     }
 
+    public File getLogFile() {
+        return new File("PeriodicBackup.log");
+    }
+    /**
+     * Handles incremental log output.
+     *
+     * @param req StaplerRequest
+     * @param rsp StaplerResponse
+     * @throws java.io.IOException if IOException
+     */
+    @SuppressWarnings("unused")
+    public void doProgressiveLog( StaplerRequest req, StaplerResponse rsp) throws IOException {
+        new org.kohsuke.stapler.framework.io.LargeText(getLogFile(),false).doProgressText(req,rsp);
+    }
+
     @SuppressWarnings("unused")
     public void doBackup(StaplerRequest req, StaplerResponse rsp) throws Exception {
         backupNow = true;
         PeriodicBackup.get().doRun();
         message = "Creating backup...";
-        rsp.sendRedirect(".");
+        rsp.sendRedirect("console");
     }
 
     /**
@@ -161,7 +200,7 @@ public class PeriodicBackupLink extends ManagementLink implements Describable<Pe
         Thread t = new Thread(restoreExecutor);
         t.start();
         message = "Restoring backup...";
-        rsp.sendRedirect(".");
+        rsp.sendRedirect("console");
     }
 
     @Override

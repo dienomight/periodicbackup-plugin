@@ -31,7 +31,8 @@ import hudson.model.TaskListener;
 import org.codehaus.plexus.archiver.ArchiverException;
 
 import java.io.IOException;
-import java.util.logging.Logger;
+import java.util.logging.*;
+
 import hudson.scheduler.CronTab;
 
 /**
